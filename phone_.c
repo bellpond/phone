@@ -12,14 +12,34 @@
 #include <pthread.h>
 
 #define N 1000
-#define M 1000
+#define M 10
 #define HOSTNAME_SIZE 100
+#define CUT_STEP 50
+#define CUT 30
 
-int s = 0;
+char order = 'n';
 
 void die(char *s) {
     perror(s);
     exit(1);
+}
+
+void *wait_command() {
+  int c;
+  while((c = getchar()) != EOF) {
+    switch (c) {
+      case 'n':
+      order = 'n';
+      break;
+      case 'q':
+      order = 'q';
+      break;
+      case 'w':
+      order = 'w';
+      break;
+    }
+  }
+  return NULL;
 }
 
 void cut_data(unsigned char *data, int cut_step, int cut) {
@@ -30,7 +50,6 @@ void cut_data(unsigned char *data, int cut_step, int cut) {
     }
   }
 }
-
 
 int server(int port) {
 
@@ -48,23 +67,26 @@ int server(int port) {
   if(listen(ss, 10) == -1) die("listen");
 
   // accept
+  int s;
   struct sockaddr_in client_addr;
   socklen_t len = sizeof(struct sockaddr_in);
   s = accept(ss, (struct sockaddr *)&client_addr, &len);
   if (s == -1) die("accept");
 
   FILE *rec_p;
-  if((rec_p = popen("rec -t raw -b 16 -c 1 -e s -r 44100 -", "r")) == NULL) die("popen");
+  if((rec_p = popen("rec --buffer 50 --input-buffer 50 -t raw -b 16 -c 1 -e s -r 44100 -", "r")) == NULL) die("popen");
   FILE *play_p;
   if((play_p = popen("play -t raw -b 16 -c 1 -e s -r 44100 -", "w")) == NULL) die("popen");
 
   unsigned char buf[M];
   unsigned char data[N];
 
-  while(1) {
+  while(order != 'q') {
+    // 破棄
+    if(fread(buf,sizeof(unsigned char),M,rec_p) == -1) die("read");
     // 送信
     if(fread(data,sizeof(unsigned char),N,rec_p) == -1) die("read");
-    //cut_data(data, 50, 30);
+    if(order == 'w') cut_data(data, CUT_STEP, CUT);
     if(send(s,data,N,0) == -1) die("send");
     //受信
     if(recv(s,data,N,0) == -1) die("recv");
@@ -80,7 +102,10 @@ int server(int port) {
 }
 
 int client(char *hostname, int port) {
+    pthread_t th;
+    pthread_create(&th, NULL, wait_command, (void *)NULL);
 
+    int s;
     if((s = socket(PF_INET,SOCK_STREAM,0)) == -1) die("socket");
 
     // connect
@@ -91,23 +116,24 @@ int client(char *hostname, int port) {
     if(connect(s,(struct sockaddr *)&addr,sizeof(addr)) == -1) die("connect");
 
     FILE *rec_p;
-    if((rec_p = popen("rec -t raw -b 16 -c 1 -e s -r 44100 -", "r")) == NULL) die("popen");
+    if((rec_p = popen("rec --buffer 25 --input-buffer 25 -t raw -b 16 -c 1 -e s -r 44100 -", "r")) == NULL) die("popen");
     FILE *play_p;
     if((play_p = popen("play -t raw -b 16 -c 1 -e s -r 44100 -", "w")) == NULL) die("popen");
 
     unsigned char buf[M];
     unsigned char data[N];
 
-    while(1) {
+    while(order != 'q') {
+      // 破棄
+      if(fread(buf,sizeof(unsigned char),M,rec_p) == -1) die("read");
       // 送信
       if(fread(data,sizeof(unsigned char),N,rec_p) == -1) die("read");
-      //cut_data(data, 50, 30);
+      if(order == 'w') cut_data(data, CUT_STEP, CUT);
       if(send(s,data,N,0) == -1) die("send");
       //受信
       if(recv(s,data,N,0) == -1) die("recv");
       if(fwrite(data,sizeof(unsigned char),N,play_p) == -1) die("write");
     }
-
     pclose(rec_p);
     pclose(play_p);
     close(s);
