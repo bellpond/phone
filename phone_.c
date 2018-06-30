@@ -31,9 +31,6 @@ void die(char *s) {
     exit(1);
 }
 
-
-
-
 /* fd から 必ず n バイト読み, bufへ書く.
    n バイト未満でEOFに達したら, 残りは0で埋める.
    fd から読み出されたバイト数を返す */
@@ -195,6 +192,17 @@ int filter(int fi, int fo, const long n) {
     print_complex(wp, Y, n);
     fprintf(wp, "----------------\n");
 
+    /* バンドパス */
+    double fs = 44100; // 標本化周波数
+    double fc_l = 10000; // カットオフ周波数（低域） 声の下限
+    double fc_h = 10000; // カットオフ周波数（高域）　声の上限
+
+    int i;
+    for(i = 0; i < n * sizeof(sample_t); i++) {
+      if(i / (n / fs) < fc_l) Y[i] = 0;
+      if(i / (n / fs) > fc_h) Y[i] = 0;
+    }
+
     /* IFFT -> Z */
     ifft(Y, X, n);
     /* 標本の配列に変換 */
@@ -241,7 +249,7 @@ int server(int port) {
     // 破棄
     if(fread(buf,sizeof(unsigned char),M,rec_p) == -1) die("read");
 
-    // 送信
+    // 録音データ
     if(fread(data,sizeof(unsigned char),N,rec_p) == -1) die("fread");
 
     FILE *buf_fip;
@@ -249,6 +257,7 @@ int server(int port) {
     if(fwrite(data,sizeof(unsigned char),N,buf_fip) == -1) die("fwrite");
     fclose(buf_fip);
 
+    // フィルター
     int buf_fid;
     int buf_fod;
     if((buf_fid = open("bufi.dat", O_RDONLY)) == -1) die("open");
@@ -259,13 +268,15 @@ int server(int port) {
     close(buf_fid);
     close(buf_fod);
 
-    if(order == 'w') cut_data(data, CUT_STEP, CUT);
-
     FILE *buf_fop;
-    if((buf_fop = fopen("bufo.dat", "wb+")) == NULL) die("fopen");
+    if((buf_fop = fopen("bufo.dat", "rb")) == NULL) die("fopen");
     if(fread(data,sizeof(unsigned char),N,buf_fop) == -1) die("fread");
     fclose(buf_fop);
 
+    // 加工
+    if(order == 'w') cut_data(data, CUT_STEP, CUT);
+    
+    // 送信
     if(send(s,data,N,0) == -1) die("send");
 
     //受信
